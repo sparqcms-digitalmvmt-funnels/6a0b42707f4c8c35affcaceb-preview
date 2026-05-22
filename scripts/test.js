@@ -316,11 +316,21 @@ const getShippingProfiles = async () => {
 };
 
 let shippingProfiles = [];
+let shippingProfilesReady;
 
-const resolveShippingProfile = (productEl) => {
-  const profileId = productEl
-    ? +productEl.getAttribute("data-shipping-profile-id")
-    : undefined;
+const resolveProfileIdFromEl = (el, country) => {
+  if (country && el) {
+    try {
+      const overrides = JSON.parse(el.getAttribute("data-shipping-country-overrides") || "{}");
+      const id = +overrides[country];
+      if (Number.isFinite(id)) return id;
+    } catch (_) {}
+  }
+  return el ? +el.getAttribute("data-shipping-profile-id") || undefined : undefined;
+};
+
+const resolveShippingProfile = (productEl, country) => {
+  const profileId = resolveProfileIdFromEl(productEl, country);
   const profile = shippingProfiles.find(
     (p) => p.shipping_profile_id === profileId
   );
@@ -654,13 +664,10 @@ async function createOrderViaWallet(confirmationToken, paymentMethodId) {
   const email = data.email || billing?.email;
   const phone = data.phone || shipping?.phone || billing?.phone;
 
-  const shippingProfileId =
-      +document
-        .querySelector(`[data-product-id="${selectedProduct.id}"]`)
-        ?.getAttribute("data-shipping-profile-id") || undefined;
+  const shippingProfileId = resolveProfileIdFromEl(document.querySelector(`[data-product-id="${selectedProduct.id}"]`), shipping?.address?.country);
 
   const orderData = {
-    pageId: "wCwE4KRXdNsLelM0_nP_Hb1SFkQ9UZqmM5Oy1PId5yLBx9N-FwwiWLO2HXptKkYB",
+    pageId: "_rNwum_iW7vAMXG1kIQmeHAK5U_aljaZFANiINYURs-injDwqsr-OHLxhK9gy1Wh",
     action: "process",
     campaign_id: CAMPAIGN_ID,
     connection_id: 1,
@@ -1197,7 +1204,9 @@ function initVrioWallets() {
     const selectedProductEl = document.querySelector(
       `[data-product-id='${selectedProduct.id}']`
     );
-    const resolvedShippingProfile = resolveShippingProfile(selectedProductEl);
+   
+    const formCountry = document.querySelector("[name='shippingCountry']")?.value || undefined;
+    const resolvedShippingProfile = resolveShippingProfile(selectedProductEl, formCountry);
 
     if (resolvedShippingProfile) {
       updateStripeElementsAmount(total + (resolvedShippingProfile.amount || 0));
@@ -1208,6 +1217,27 @@ function initVrioWallets() {
       updateStripeElementsAmount(total);
       event.resolve();
     }
+  });
+
+  expressElement.on("shippingaddresschange", async (event) => {
+    const country = event.address.country;
+    const selectedProductEl = document.querySelector(
+      `[data-product-id='${selectedProduct.id}']`
+    );
+    await shippingProfilesReady;
+    const shippingProfile = resolveShippingProfile(selectedProductEl, country);
+
+    if (!shippingProfile) {
+      event.reject();
+      return;
+    }
+
+    const total = window.stripeTotalOverride ?? calculateTotalAmount();
+    await updateStripeElementsAmount(total + (shippingProfile.amount || 0));
+
+    event.resolve({
+      shippingRates: [shippingProfile]
+    });
   });
 
   expressElement.on("confirm", async () => {
@@ -1448,10 +1478,10 @@ async function createOrderViaPaypal(isExpress = false) {
   const normalizedBillState = (billingStateEl && billingStateEl.dataset && billingStateEl.dataset.hasStates === "true")
     ? billingState
     : undefined;
-  const shippingProfileId = +document.querySelector(`[data-product-id="${selectedProduct.id}"]`)?.getAttribute('data-shipping-profile-id') || undefined;
+  const shippingProfileId = resolveProfileIdFromEl(document.querySelector(`[data-product-id="${selectedProduct.id}"]`), shippingCountry);
   const sameAddress = isSameAddress();
   const orderData = {
-    pageId: "wCwE4KRXdNsLelM0_nP_Hb1SFkQ9UZqmM5Oy1PId5yLBx9N-FwwiWLO2HXptKkYB",
+    pageId: "_rNwum_iW7vAMXG1kIQmeHAK5U_aljaZFANiINYURs-injDwqsr-OHLxhK9gy1Wh",
     action: "process",
     campaign_id: CAMPAIGN_ID,
     connection_id: 1, // VRIO URL ending /connection
@@ -1743,15 +1773,12 @@ async function createOrderViaKlarna() {
     billingStateEl.dataset.hasStates === "true"
       ? billingState
       : undefined;
-  const shippingProfileId =
-    +document
-      .querySelector(`[data-product-id="${selectedProduct.id}"]`)
-      ?.getAttribute("data-shipping-profile-id") || undefined;
+  const shippingProfileId = resolveProfileIdFromEl(document.querySelector(`[data-product-id="${selectedProduct.id}"]`), shippingCountry);
 
   const sameAddress = isSameAddress();
 
   const orderData = {
-    pageId: "wCwE4KRXdNsLelM0_nP_Hb1SFkQ9UZqmM5Oy1PId5yLBx9N-FwwiWLO2HXptKkYB",
+    pageId: "_rNwum_iW7vAMXG1kIQmeHAK5U_aljaZFANiINYURs-injDwqsr-OHLxhK9gy1Wh",
     campaign_id: CAMPAIGN_ID,
     connection_id: 1,
     email: email,
@@ -2126,12 +2153,12 @@ async function createOrderViaCreditCard() {
     : undefined;
   const [exp_month, exp_year] = expirationDate.split("/");
   const sameAddress = isSameAddress();
-  const shippingProfileId = +document.querySelector(`[data-product-id="${selectedProduct.id}"]`)?.getAttribute('data-shipping-profile-id') || undefined;
+  const shippingProfileId = resolveProfileIdFromEl(document.querySelector(`[data-product-id="${selectedProduct.id}"]`), shippingCountry);
 
   let orderTotal = Math.max(0, Number(selectedProduct.price) * selectedProduct.quantity);
 
   const orderData = {
-    pageId: "wCwE4KRXdNsLelM0_nP_Hb1SFkQ9UZqmM5Oy1PId5yLBx9N-FwwiWLO2HXptKkYB",
+    pageId: "_rNwum_iW7vAMXG1kIQmeHAK5U_aljaZFANiINYURs-injDwqsr-OHLxhK9gy1Wh",
     action: "process",
     campaign_id: CAMPAIGN_ID,
     connection_id: 1, // VRIO URL ending /connection
@@ -2829,7 +2856,17 @@ const populateCountries = (countryEl) => {
 document.addEventListener("DOMContentLoaded", async () => {
   
 (function ensurePreloaderExists() {
-    if (document.querySelector('[data-preloader]')) return;
+    const existing = document.querySelector('[data-preloader]');
+    if (existing) {
+        if (!existing.getAttribute('data-testid')) {
+            existing.setAttribute('data-testid', 'preloader');
+        }
+        const spinner = existing.querySelector('.loader');
+        if (spinner && !spinner.getAttribute('data-testid')) {
+            spinner.setAttribute('data-testid', 'preloader-spinner');
+        }
+        return;
+    }
     const loaderOverlay = document.createElement('div');
     loaderOverlay.setAttribute('data-preloader', '');
     loaderOverlay.setAttribute('data-testid', 'preloader');
@@ -3084,7 +3121,7 @@ if (typeof validateAndSendToKlaviyo === "function") {
   handleFreeGiftParam(allProducts);
   updateStripeElementsAmount();
 
-  getShippingProfiles().then((profiles) => {
+  shippingProfilesReady = getShippingProfiles().then((profiles) => {
     shippingProfiles = profiles || [];
   });
 
@@ -4462,7 +4499,7 @@ async function returnPaypal() {
     });
     const responseDataCustomer = await responseCustomer.json();
     let orderData = JSON.parse(sessionStorage.getItem("orderData"));
-    const shippingProfileId = +document.querySelector(`[data-product-id="${selectedProduct.id}"]`)?.getAttribute('data-shipping-profile-id') || undefined;
+    const shippingProfileId = resolveProfileIdFromEl(document.querySelector(`[data-product-id="${selectedProduct.id}"]`), orderData?.ship_country || responseDataCustomer?.ship_country);
     const vrioTrackingFields = (() => {
     function getQueryParamsCaseInsensitive() {
       const params = new URLSearchParams(window.location.search);
@@ -4534,7 +4571,7 @@ async function returnPaypal() {
 ;
 
     const body = {
-        pageId: "wCwE4KRXdNsLelM0_nP_Hb1SFkQ9UZqmM5Oy1PId5yLBx9N-FwwiWLO2HXptKkYB",
+        pageId: "_rNwum_iW7vAMXG1kIQmeHAK5U_aljaZFANiINYURs-injDwqsr-OHLxhK9gy1Wh",
         action: "process",
         campaign_id: CAMPAIGN_ID,
         connection_id: 1,
